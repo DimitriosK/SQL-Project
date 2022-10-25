@@ -1,0 +1,264 @@
+/*Full data about Boeing's airplanes orders and deliveries from 1955-2022
+
+Contains full information about the customer, operating country, model's name , delivery year etc.
+
+Taken from Kaggle */
+
+-- check the set
+SELECT *
+FROM boeing_orders
+
+
+--Count the number of rows that the data set has (Answer: 9072)
+SELECT ROW_NUMBER() OVER() AS RANK
+FROM BOEING_ORDERS
+ORDER BY RANK DESC
+-- How many planes each customerordered? List the top 10 custmers. When you run the code below, you will see
+-- that there is a customer name 'Unindentified customers' which has 1238 orders in total
+
+SELECT "Customer_Name",
+	SUM("Order_Total") AS TOTAL
+FROM BOEING_ORDERS
+GROUP BY "Customer_Name"
+ORDER BY TOTAL DESC
+LIMIT 10
+
+-- Let's take a look at customer name 'Unindentified Customers' when we run this code, we can see that for 
+--'Unindentified Customers' we do not have a record of 'Region','Delivery_Year' and 'Country'
+SELECT *
+FROM BOEING_ORDERS
+WHERE "Customer_Name" like '%Customer(s)%'
+-- Does the date include customers with zero total orders but non-zero "Delivery_Total". The code below shows that 
+--the answer is "Yes"
+SELECT "Customer_Name",
+	"Order_Total",
+	"Delivery_Total"
+FROM BOEING_ORDERS
+WHERE "Order_Total" = 0
+	AND "Delivery_Total" != 0
+
+-- Which airline companies have  zero total orders but non-zero "Delivery_Total".
+SELECT DISTINCT "Customer_Name"
+FROM BOEING_ORDERS
+WHERE "Order_Total" = 0
+	AND "Delivery_Total" != 0
+
+-- For each country and and airline company find how many orders were placed in total and home many deliveries
+-- happened
+SELECT "Country" AS COUNTRY,
+	"Customer_Name" AS COMPANY,
+	SUM("Order_Total") AS ORDERED,
+	SUM("Delivery_Total") AS DELIVERED
+FROM BOEING_ORDERS
+WHERE "Customer_Name" != 'Unidentified Customer(s)'
+GROUP BY 1,2
+ORDER BY ORDERED DESC
+
+-- use rollup method to answer the same questionas above  and to see the number of deliveries and orders for each country
+-- and hte grand total. 
+SELECT "Country" AS COUNTRY,
+	"Customer_Name" AS COMPANY,
+	SUM("Order_Total") AS ORDERED,
+	SUM("Delivery_Total") AS DELIVERED
+FROM BOEING_ORDERS
+WHERE "Customer_Name" != 'Unidentified Customer(s)'
+GROUP BY ROLLUP(1,2)
+ORDER BY COUNTRY
+
+-- Let's replace null values in the column company with country total
+
+SELECT COUNTRY, 
+	COALESCE(COMPANY, 
+		
+		'country_total'), 
+	ORDERED, 
+	DELIVERED
+FROM 
+	(SELECT "Country" AS COUNTRY, 
+			"Customer_Name" AS COMPANY, 
+			SUM("Order_Total") AS ORDERED, 
+			SUM("Delivery_Total") AS DELIVERED
+		FROM BOEING_ORDERS 
+		WHERE "Customer_Name" != 'Unidentified Customer(s)'
+		GROUP BY ROLLUP(1,
+
+												2)
+		ORDER BY COUNTRY)SUB
+
+
+
+-- How many deliveries on average happend in every region
+SELECT "Region" AS REGION,
+	AVG("Delivery_Total") AS AVERAGE
+FROM BOEING_ORDERS
+WHERE "Region" IS NOT NULL
+GROUP BY 1
+ORDER BY AVERAGE DESC
+
+-- For each country find the airline company with most number of orders
+--Step 1 first group by country and customer name and call the below with cte
+
+WITH CTE1 AS
+	(SELECT "Country" AS COUNTRY,
+			"Customer_Name" AS COMPANY,
+			SUM("Order_Total") AS ORDERED
+		FROM BOEING_ORDERS
+		GROUP BY 1,2
+		ORDER BY COUNTRY), --Select each country with maximum orders from cte (created in step 1) and wrap the code below in cte
+CTE2 AS
+	(SELECT COUNTRY,
+			MAX(ORDERED)
+		FROM CTE1
+		GROUP BY 1
+		ORDER BY COUNTRY) -- inner join tow cte's on country and ordered and max to getthe desired result
+
+SELECT CTE1.COUNTRY,
+	CTE2.MAX
+FROM CTE1
+INNER JOIN CTE2 ON CTE1.COUNTRY = CTE2.COUNTRY
+AND CTE1.ORDERED = CTE2.MAX
+
+--use the window function dense_rank() to answer the same question as above without using joins
+WITH CTE3 AS
+	(SELECT COUNTRY,
+			COMPANY,
+			ORDERED,
+			DENSE_RANK() OVER(PARTITION BY COUNTRY ORDER BY ORDERED DESC) AS RANK
+		FROM
+			(SELECT "Country" AS COUNTRY,
+					"Customer_Name" AS COMPANY,
+					SUM("Order_Total") AS ORDERED
+				FROM BOEING_ORDERS
+				GROUP BY 1,
+					2
+				ORDER BY COUNTRY)SUB
+		ORDER BY COUNTRY)
+		
+SELECT COUNTRY,
+	COMPANY,
+	ORDERED
+FROM CTE3
+WHERE RANK = 1
+
+--Let's create the column failure which takes values 0 an 1: 0 if total order>total delivery and 0 otherwiae
+-- Also let's create the date column for order and delivery. Let's put it in cte
+
+WITH cte4 as (
+SELECT *,
+	CASE
+					WHEN "Order_Total" > "Delivery_Total" THEN 1
+					ELSE 0
+	END AS FAILURE,
+	TO_DATE(CONCAT("Order_Month",' ',"Order_Year"),'Mon, YYYY') AS DATE_ORDERED
+FROM BOEING_ORDERS)
+
+-- Let's find the for each  customer name the Probability(failure) where the dilvery year and 
+--the order year is the same
+
+
+
+select "Country", avg(failure) as probability
+from cte4
+where "Delivery_Year"="Order_Year"
+group by 1
+order by probability desc
+
+--Now if we remove the condition delivery year=order year then we see higher probabilities.
+
+WITH cte4 as (
+SELECT *,
+	CASE
+					WHEN "Order_Total" > "Delivery_Total" THEN 1
+					ELSE 0
+	END AS FAILURE,
+	TO_DATE(CONCAT("Order_Month",' ',"Order_Year"),'Mon, YYYY') AS DATE_ORDERED
+FROM BOEING_ORDERS)
+
+SELECT "Country",
+	AVG(FAILURE) AS PROBABILITY
+FROM CTE4
+WHERE "Country" != 'Unidentified'
+GROUP BY 1
+ORDER BY PROBABILITY DESC
+
+--Let's find the countries in Oceania which have same probability(failure) with countries in Europe
+WITH cte4 as (
+SELECT *,
+	CASE
+					WHEN "Order_Total" > "Delivery_Total" THEN 1
+					ELSE 0
+	END AS FAILURE,
+	TO_DATE(CONCAT("Order_Month",' ',"Order_Year"),'Mon, YYYY') AS DATE_ORDERED
+FROM BOEING_ORDERS),
+EUROPE AS
+	(SELECT "Country" AS COUNTRY,
+			ROUND(AVG(FAILURE),
+				4) AS PROBABILITY
+		FROM CTE4
+		WHERE "Country" IS NOT NULL
+			AND "Region" = 'Europe'
+		GROUP BY "Country"),
+	OCEANIA AS
+	(SELECT "Country" AS COUNTRY,
+			ROUND(AVG(FAILURE),
+				4) AS PROBABILITY
+		FROM CTE4
+		WHERE "Country" IS NOT NULL
+			AND "Region" = 'Oceania'
+		GROUP BY "Country")
+
+
+SELECT TABLE1.COUNTRY AS EU_COUNTRY,
+	TABLE2.COUNTRY AS OCEANIA_COUNTRY
+FROM EUROPE AS TABLE1
+INNER JOIN OCEANIA AS TABLE2 ON TABLE1.PROBABILITY = TABLE2.PROBABILITY
+ORDER BY TABLE1.COUNTRY
+
+--Let's find the airline companies with same probability failure
+
+WITH cte4 as (
+SELECT *,
+	CASE
+					WHEN "Order_Total" > "Delivery_Total" THEN 1
+					ELSE 0
+	END AS FAILURE,
+	TO_DATE(CONCAT("Order_Month",' ',"Order_Year"),'Mon, YYYY') AS DATE_ORDERED
+FROM BOEING_ORDERS),
+CTE5 AS
+	(SELECT "Customer_Name" AS COMPANY,
+			AVG(FAILURE) AS PROBABILITY
+		FROM CTE4
+		GROUP BY 1)
+SELECT TABLE1.COMPANY,
+	TABLE2.COMPANY,
+	TABLE1.PROBABILITY
+FROM CTE5 AS TABLE1
+INNER JOIN CTE5 AS TABLE2 ON TABLE1.PROBABILITY = TABLE2.PROBABILITY
+AND TABLE1.COMPANY < TABLE2.COMPANY--we put this condition so that
+ --we do not have repetitive pairs
+ORDER BY TABLE1.COMPANY
+
+
+
+--Let's found the years and months that the orders weren't placed.
+
+
+WITH TABLE_MONTH AS
+	(SELECT GENERATE_SERIES('1955-01-01','2022-01-01','1 month'::interval)::date AS MONTH)
+SELECT T1.MONTH,
+	COALESCE(SUB.DATE_ORDERED::VARCHAR(50),
+
+		' order wasn''t placed') AS NOT_PALCED
+FROM TABLE_MONTH AS T1
+LEFT JOIN
+	(SELECT TO_DATE(CONCAT("Order_Month",' ',"Order_Year"),'Mon, YYYY') AS DATE_ORDERED
+		FROM BOEING_ORDERS)SUB 
+ON T1.MONTH = SUB.DATE_ORDERED
+WHERE SUB.DATE_ORDERED IS NULL
+
+
+
+
+
+
+
